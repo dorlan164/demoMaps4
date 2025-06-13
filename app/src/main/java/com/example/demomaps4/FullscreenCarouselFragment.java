@@ -1,12 +1,10 @@
-package com.example.demomaps3;
+package com.example.demomaps4;
 
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;               // ← import correcto de AndroidX
 import androidx.viewpager2.widget.ViewPager2;
 

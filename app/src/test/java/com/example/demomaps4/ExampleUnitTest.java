@@ -1,4 +1,4 @@
-package com.example.demomaps3;
+package com.example.demomaps4;
 
 import org.junit.Test;
 

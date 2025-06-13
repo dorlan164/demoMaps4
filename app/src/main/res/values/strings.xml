@@ -1,6 +1,8 @@
 <resources>
-    <string name="app_name">demoMaps3</string>
+    <string name="app_name">demoMaps4</string>
 
     <!-- ... tus otras cadenas ... -->
     <string name="desc_ver_imagenes">Ver imágenes del cliente</string>
+    <string name="google_maps_key">AIzaSyBz6QXWCB2VpiBPNzkLYJLK-5AstNLQ4Zo</string>
+
 </resources>

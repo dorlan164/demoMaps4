@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.example.demomaps3'
+    namespace 'com.example.demomaps4'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.example.demomaps3"
+        applicationId "com.example.demomaps4"
         minSdk 23
         targetSdk 35
         versionCode 1
@@ -43,4 +43,19 @@ dependencies {
     implementation 'androidx.recyclerview:recyclerview:1.2.1'
     implementation 'androidx.viewpager2:viewpager2:1.0.0'
     implementation 'com.github.chrisbanes:PhotoView:2.3.0'
+
+    // Para peticiones HTTP
+    implementation 'com.android.volley:volley:1.2.1'
+// Para decodificar polylines
+    implementation 'com.google.maps.android:android-maps-utils:2.2.5'
+
+
+    // Para obtener la ubicación del usuario
+    implementation 'com.google.android.gms:play-services-location:21.0.1'
+
+// Para las rutas (PolyUtil desde Maps Utils)
+    implementation 'com.google.maps.android:android-maps-utils:2.3.0'
+
+    implementation "com.squareup.okhttp3:okhttp:4.10.0"
+
 }
