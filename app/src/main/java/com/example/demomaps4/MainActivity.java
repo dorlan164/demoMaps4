@@ -6,10 +6,11 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Address;
 import android.location.Geocoder;
-import android.location.Location;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.ImageView;
 import android.widget.ListView;
@@ -20,8 +21,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentManager;
 
-import com.google.android.gms.location.FusedLocationProviderClient;
-import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.*;
 import com.google.android.gms.maps.*;
 import com.google.android.gms.maps.model.*;
 import com.google.android.gms.tasks.OnSuccessListener;
@@ -38,13 +38,8 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-import android.view.View;
-import android.view.ViewGroup;
-import android.widget.ImageView;
-
-
-public class MainActivity extends AppCompatActivity implements OnMapReadyCallback,
-        GoogleMap.OnMarkerClickListener {
+public class MainActivity extends AppCompatActivity
+        implements OnMapReadyCallback, GoogleMap.OnMarkerClickListener {
 
     private static final int LOCATION_PERMISSION_REQUEST = 1000;
 
@@ -53,14 +48,14 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private ClienteAdapter adapter;
     private int selectedPos = 0;
 
-    // Para rutas
     private FusedLocationProviderClient fusedLocationClient;
-    private LatLng currentLocation;  // se llena en getLastLocation()
+    private LocationCallback locationCallback;
+    private LatLng currentLocation;
 
-    // Datos de ejemplo
+    // Datos de ejemplo: 3 clientes con 2 coordenadas cada uno
     private final LatLng[][] coords = {
             { new LatLng(28.6330, -106.0691), new LatLng(28.6392, -106.0824) },
-            { new LatLng(21.161907, -86.851528),  new LatLng(25.686614, -100.316113) },
+            { new LatLng(21.161907, -86.851528), new LatLng(25.686614, -100.316113) },
             { new LatLng(19.041297, -98.206200),  new LatLng(20.967370, -89.592586) }
     };
     private final String[] direccionesTexto = {
@@ -69,9 +64,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             "Calle 14 56, Mérida, Yucatán"
     };
     private final int[] carouselImages = {
-            R.drawable.img1,
-            R.drawable.img2,
-            R.drawable.img3
+            R.drawable.img1, R.drawable.img2, R.drawable.img3
     };
 
     @Override
@@ -79,22 +72,36 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // --- Inicializar cliente de localización ---
+        // --- 1) Configurar FusedLocation para ubicación en tiempo real ---
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        LocationRequest req = LocationRequest.create()
+                .setInterval(5000)
+                .setFastestInterval(2000)
+                .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult lr) {
+                if (lr == null) return;
+                double lat = lr.getLastLocation().getLatitude();
+                double lng = lr.getLastLocation().getLongitude();
+                currentLocation = new LatLng(lat, lng);
+                // Ya no recenter aquí para no arruinar el zoom de los 4 puntos
+            }
+        };
+
+        // --- 2) Pedir permiso de ubicación ---
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
+                    new String[]{ Manifest.permission.ACCESS_FINE_LOCATION },
                     LOCATION_PERMISSION_REQUEST);
         } else {
-            getLastLocation();
+            startLocationUpdates(req);
         }
 
-        // --- Lista de clientes ---
+        // --- 3) Configurar lista de clientes ---
         lvClientes = findViewById(R.id.listViewClientes);
         lvClientes.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
-        lvClientes.setSelector(android.R.color.transparent);
-
         List<String> listaItems = new ArrayList<>();
         String bullet = "\u2022 ";
         for (int i = 0; i < coords.length; i++) {
@@ -104,78 +111,85 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     + bullet + direccionesTexto[i];
             listaItems.add(item);
         }
-
         adapter = new ClienteAdapter(listaItems);
         lvClientes.setAdapter(adapter);
         lvClientes.setItemChecked(selectedPos, true);
-
-        lvClientes.setOnItemClickListener((parent, view, pos, id) -> {
+        lvClientes.setOnItemClickListener((p, v, pos, id) -> {
             selectedPos = pos;
             lvClientes.setItemChecked(pos, true);
             adapter.notifyDataSetChanged();
             if (map != null) mostrarPines(pos);
         });
 
-        // --- Map fragment ---
+        // --- 4) Inicializar Google Map ---
         SupportMapFragment mapFrag = (SupportMapFragment)
                 getSupportFragmentManager().findFragmentById(R.id.map);
         mapFrag.getMapAsync(this);
     }
 
-    // Resultado petición permiso
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == LOCATION_PERMISSION_REQUEST
-                && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            getLastLocation();
-        }
-    }
-
-    // Obtiene la última ubicación conocida
-    private void getLastLocation() {
+    /** Inicia actualizaciones periódicas de ubicación */
+    private void startLocationUpdates(LocationRequest req) {
+        fusedLocationClient.requestLocationUpdates(req, locationCallback, getMainLooper());
         fusedLocationClient.getLastLocation()
-                .addOnSuccessListener(this, location -> {
-                    if (location != null) {
-                        currentLocation = new LatLng(
-                                location.getLatitude(),
-                                location.getLongitude()
-                        );
+                .addOnSuccessListener(this, loc -> {
+                    if (loc != null) {
+                        currentLocation = new LatLng(loc.getLatitude(), loc.getLongitude());
                     }
                 });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code,
+                                           @NonNull String[] perms, @NonNull int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code == LOCATION_PERMISSION_REQUEST
+                && results.length > 0
+                && results[0] == PackageManager.PERMISSION_GRANTED) {
+            LocationRequest req = LocationRequest.create()
+                    .setInterval(5000)
+                    .setFastestInterval(2000)
+                    .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+            startLocationUpdates(req);
+            if (map != null) enableMyLocationLayer();
+        }
     }
 
     @Override
     public void onMapReady(GoogleMap googleMap) {
         map = googleMap;
         map.setOnMarkerClickListener(this);
+        enableMyLocationLayer();
         map.moveCamera(CameraUpdateFactory.newLatLngZoom(
-                new LatLng(20.0,-100.0), 4f));
+                new LatLng(20.0, -100.0), 4f));
         mostrarPines(selectedPos);
     }
 
-    // Limpia marcadores y añade los del cliente idx
+    /** Activa el punto azul “Mi ubicación” y su botón */
+    private void enableMyLocationLayer() {
+        if (ContextCompat.checkSelfPermission(this,
+                Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            map.setMyLocationEnabled(true);
+            map.getUiSettings().setMyLocationButtonEnabled(true);
+        }
+    }
+
+    /** Muestra los 3 marcadores del cliente y ajusta zoom para incluirlos junto con currentLocation */
     private void mostrarPines(int idx) {
         map.clear();
         LatLng p1 = coords[idx][0], p2 = coords[idx][1];
         map.addMarker(new MarkerOptions().position(p1)
                 .title("Dirección 1")
-                .icon(BitmapDescriptorFactory.defaultMarker(
-                        BitmapDescriptorFactory.HUE_RED)));
+                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)));
         map.addMarker(new MarkerOptions().position(p2)
                 .title("Dirección 2")
-                .icon(BitmapDescriptorFactory.defaultMarker(
-                        BitmapDescriptorFactory.HUE_GREEN)));
-        map.animateCamera(CameraUpdateFactory.newLatLngZoom(p1,8f));
+                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN)));
 
-        // Tercera dirección vía geocoder
+        // Obtener tercera dirección
         new Thread(() -> {
             try {
                 List<Address> res = new Geocoder(this, Locale.getDefault())
-                        .getFromLocationName(direccionesTexto[idx],1);
+                        .getFromLocationName(direccionesTexto[idx], 1);
                 if (!res.isEmpty()) {
                     LatLng p3 = new LatLng(
                             res.get(0).getLatitude(),
@@ -183,47 +197,41 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     runOnUiThread(() -> {
                         map.addMarker(new MarkerOptions().position(p3)
                                 .title("Dirección 3")
-                                .icon(BitmapDescriptorFactory.defaultMarker(
-                                        BitmapDescriptorFactory.HUE_BLUE)));
-                        LatLngBounds b = new LatLngBounds.Builder()
-                                .include(p1).include(p2).include(p3).build();
+                                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)));
+                        // Ahora que tenemos p3, construimos bounds incluyendo currentLocation
+                        LatLngBounds.Builder b = new LatLngBounds.Builder()
+                                .include(p1).include(p2).include(p3);
+                        if (currentLocation != null) {
+                            b.include(currentLocation);
+                        }
                         map.animateCamera(
-                                CameraUpdateFactory.newLatLngBounds(b,100));
+                                CameraUpdateFactory.newLatLngBounds(b.build(), 100));
                     });
                 }
-            } catch(IOException e){e.printStackTrace();}
+            } catch(IOException e){ e.printStackTrace(); }
         }).start();
     }
 
-    // Al clickear en un marker
+    /** Cuando se pulsa un marcador: ofrece rutas y Street View */
     @Override
     public boolean onMarkerClick(Marker marker) {
         LatLng destino = marker.getPosition();
-        CharSequence[] opts = {
-                "Ruta en App",
-        //        "Ruta en Maps",
-                "Street View"
-        };
+        CharSequence[] opts = { "Ruta en App", "Ruta en Maps", "Street View" };
         new AlertDialog.Builder(this)
                 .setTitle(marker.getTitle())
                 .setItems(opts, (d,w) -> {
-                    if (w==0) {
-                        // dibujar en app
-                        if (currentLocation!=null) {
-                            drawRoute(currentLocation, destino);
-                        }
-                  //  } //else if (w==1) {
-                        // navegación externa
-                      //  Intent i = new Intent(Intent.ACTION_VIEW,
-                    //            Uri.parse("google.navigation:q="
-                       //                 +destino.latitude+","+destino.longitude));
-                      //  i.setPackage("com.google.android.apps.maps");
-                     //   startActivity(i);
+                    if (w == 0 && currentLocation != null) {
+                        drawRoute(currentLocation, destino);
+                    } else if (w == 1) {
+                        Intent i = new Intent(Intent.ACTION_VIEW,
+                                Uri.parse("google.navigation:q="
+                                        + destino.latitude + "," + destino.longitude));
+                        i.setPackage("com.google.android.apps.maps");
+                        startActivity(i);
                     } else {
-                        // Street View
                         Intent i = new Intent(Intent.ACTION_VIEW,
                                 Uri.parse("google.streetview:cbll="
-                                        +destino.latitude+","+destino.longitude));
+                                        + destino.latitude + "," + destino.longitude));
                         i.setPackage("com.google.android.apps.maps");
                         startActivity(i);
                     }
@@ -231,43 +239,42 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         return true;
     }
 
-    // Construye URL para Directions API
+    /** URL para Google Directions API */
     private String getDirectionsUrl(LatLng ori, LatLng dst) {
-        String o = "origin="+ori.latitude+","+ori.longitude;
-        String d = "destination="+dst.latitude+","+dst.longitude;
-        String key = "key="+getString(R.string.google_maps_key);
+        String o = "origin=" + ori.latitude + "," + ori.longitude;
+        String d = "destination=" + dst.latitude + "," + dst.longitude;
+        String key = "key=" + getString(R.string.google_maps_key);
         return "https://maps.googleapis.com/maps/api/directions/json?"
-                + o +"&"+ d +"&"+ key;
+                + o + "&" + d + "&" + key;
     }
 
-    // Lanza la petición y parsea la respuesta
+    /** Lanza petición y dibuja polyline */
     private void drawRoute(LatLng ori, LatLng dst) {
-        String url = getDirectionsUrl(ori,dst);
-        new AsyncTask<String,Void,String>(){
+        String url = getDirectionsUrl(ori, dst);
+        new AsyncTask<String,Void,String>() {
             @Override protected String doInBackground(String... urls) {
                 try {
                     OkHttpClient c = new OkHttpClient();
-                    Request r = new Request.Builder()
-                            .url(urls[0]).build();
+                    Request r = new Request.Builder().url(urls[0]).build();
                     Response resp = c.newCall(r).execute();
                     return resp.body().string();
-                } catch(Exception e){e.printStackTrace();}
+                } catch(Exception e){ e.printStackTrace(); }
                 return null;
             }
             @Override protected void onPostExecute(String json) {
-                if (json!=null) new AsyncTask<String,Void,List<LatLng>>(){
+                if (json != null) new AsyncTask<String,Void,List<LatLng>>() {
                     @Override protected List<LatLng> doInBackground(String... jd) {
                         List<LatLng> pts = new ArrayList<>();
                         try {
                             JSONObject jObj = new JSONObject(jd[0]);
                             JSONArray routes = jObj.getJSONArray("routes");
-                            if (routes.length()>0) {
+                            if (routes.length() > 0) {
                                 JSONArray steps = routes
                                         .getJSONObject(0)
                                         .getJSONArray("legs")
                                         .getJSONObject(0)
                                         .getJSONArray("steps");
-                                for (int i=0;i<steps.length();i++){
+                                for (int i = 0; i < steps.length(); i++) {
                                     String poly = steps
                                             .getJSONObject(i)
                                             .getJSONObject("polyline")
@@ -275,20 +282,19 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                                     pts.addAll(decodePoly(poly));
                                 }
                             }
-                        } catch(Exception e){e.printStackTrace();}
+                        } catch(Exception e){ e.printStackTrace(); }
                         return pts;
                     }
                     @Override protected void onPostExecute(List<LatLng> pts) {
-                        if (map!=null && !pts.isEmpty()) {
+                        if (map != null && !pts.isEmpty()) {
                             map.addPolyline(new PolylineOptions()
                                     .addAll(pts).width(10));
-                            // centrar cámara entre origen y destino
                             LatLngBounds b = new LatLngBounds.Builder()
                                     .include(pts.get(0))
                                     .include(pts.get(pts.size()-1))
                                     .build();
                             map.animateCamera(
-                                    CameraUpdateFactory.newLatLngBounds(b,100));
+                                    CameraUpdateFactory.newLatLngBounds(b, 100));
                         }
                     }
                 }.execute(json);
@@ -296,7 +302,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         }.execute(url);
     }
 
-    // Decodifica la polyline de Google
+    /** Decodifica polyline de Google */
     private List<LatLng> decodePoly(String encoded) {
         List<LatLng> poly = new ArrayList<>();
         int index=0, len=encoded.length(), lat=0, lng=0;
@@ -307,7 +313,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 result |= (b & 0x1f) << shift;
                 shift += 5;
             } while (b>=0x20);
-            int dlat = ((result&1)!=0 ? ~(result>>1) : (result>>1));
+            int dlat = ((result & 1) != 0 ? ~(result>>1) : (result>>1));
             lat += dlat;
             shift=0; result=0;
             do {
@@ -315,16 +321,14 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 result |= (b & 0x1f) << shift;
                 shift += 5;
             } while (b>=0x20);
-            int dlng = ((result&1)!=0 ? ~(result>>1) : (result>>1));
+            int dlng = ((result & 1) != 0 ? ~(result>>1) : (result>>1));
             lng += dlng;
-            poly.add(new LatLng(
-                    lat/1e5, lng/1e5
-            ));
+            poly.add(new LatLng(lat/1e5, lng/1e5));
         }
         return poly;
     }
 
-    // --- Adaptador de la lista (igual que antes, con el botón de fragment) ---
+    /** Adapter: infla la fila, marca seleccionado y lanza fragmento de imágenes */
     private class ClienteAdapter extends ArrayAdapter<String> {
         ClienteAdapter(List<String> items) {
             super(MainActivity.this,
@@ -333,9 +337,9 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
         @NonNull @Override
         public View getView(int pos, View cv, ViewGroup parent) {
-            View v = super.getView(pos,cv,parent);
+            View v = super.getView(pos, cv, parent);
             v.findViewById(R.id.root)
-                    .setActivated(pos==selectedPos);
+                    .setActivated(pos == selectedPos);
             ImageView btn = v.findViewById(R.id.btn_images);
             btn.setOnClickListener(x -> {
                 FullscreenCarouselFragment f =
